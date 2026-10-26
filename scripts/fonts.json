@@ -107,5 +107,59 @@
     "repository": "google/fonts",
     "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
     "license_sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"
+  },
+  {
+    "name": "MochiyPopOne.ttf",
+    "path": "ofl/mochiypopone/MochiyPopOne-Regular.ttf",
+    "license": "ofl/mochiypopone/OFL.txt",
+    "sha256": "9e009430e1316c271a5f34759c6b65fc343c4e806f193042528887e7235a92c6",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "76be26178f13ef82866cf6a5c54272191bb583c203ad7035021c7681c9043558"
+  },
+  {
+    "name": "PottaOne.ttf",
+    "path": "ofl/pottaone/PottaOne-Regular.ttf",
+    "license": "ofl/pottaone/OFL.txt",
+    "sha256": "bde843868b56e429e1c863da2efa76df533162b226d990efcb96d533b0ca2a93",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "fe55933bcfad354914050fe0e7c879bd666a623f1e363a651198ac40c271cd26"
+  },
+  {
+    "name": "YujiSyuku.ttf",
+    "path": "ofl/yujisyuku/YujiSyuku-Regular.ttf",
+    "license": "ofl/yujisyuku/OFL.txt",
+    "sha256": "82728ebafc8c97391e2dab633414a806f344b8e4e2227d307179f07b548fca61",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "ef7c85c72ae94381c8bc4832ae4e6fbabdeafa2bb8a31313cd75dce95a690256"
+  },
+  {
+    "name": "YuseiMagic.ttf",
+    "path": "ofl/yuseimagic/YuseiMagic-Regular.ttf",
+    "license": "ofl/yuseimagic/OFL.txt",
+    "sha256": "82098615f39ed9da6a8ccc674b9006e49c70dd5b775a7a1697f6bedd22ce25a2",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "c74e8c47951ddd9c902f07097761cfa0457993e28d8e1e946e273c0250be77c9"
+  },
+  {
+    "name": "HachiMaruPop.ttf",
+    "path": "ofl/hachimarupop/HachiMaruPop-Regular.ttf",
+    "license": "ofl/hachimarupop/OFL.txt",
+    "sha256": "78408910c8f1a2f174a279cbc1484b48b71780039eba3fe1be2bfcc5d4df3f98",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "8d3c434650e84f42ddb33e9b5929089ea51c39b231b798dacb33087d5f05d9f1"
+  },
+  {
+    "name": "UnifrakturMaguntia.ttf",
+    "path": "ofl/unifrakturmaguntia/UnifrakturMaguntia-Book.ttf",
+    "license": "ofl/unifrakturmaguntia/OFL.txt",
+    "sha256": "d64afc0547059dd2e4a78da48bda0aba0a9901be58c7f8c201a8b2b6b4492cc8",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "96199bf9ff12dd471a66911dee95440737b437e7f5a6fd30e9e950c16d66e8df"
   }
 ]

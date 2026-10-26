@@ -41,28 +41,58 @@ class Layout:
     native: bool = False
     # Users ask for a layout by this number (miq12), so it never changes.
     number: int = 0
-    orientation: str = "landscape"
+    # Every orientation the layout can draw; the first is its default.
+    orientations: tuple[str, ...] = ("landscape",)
+    # Hidden layouts are only drawn when asked for (miq 切り抜き), never by lot.
+    hidden: bool = False
+
+    @property
+    def orientation(self):
+        return self.orientations[0]
 
     @property
     def design(self):
         return DESIGNS[self.orientation]
+
+    def orientation_for(self, wanted):
+        """``wanted`` if the layout can draw it, else its own orientation."""
+
+        return wanted if wanted in self.orientations else self.orientation
 
 
 REGISTRY: dict[str, Layout] = {}
 
 
 def layout(
-    name, label, category, fonts, *, number, native=False, orientation="landscape"
+    name,
+    label,
+    category,
+    fonts,
+    *,
+    number,
+    native=False,
+    orientation="landscape",
+    orientations=None,
+    hidden=False,
 ):
-    if orientation not in DESIGNS:
-        raise ValueError(f"不明な向き: {orientation}")
+    orientations = tuple(orientations or (orientation,))
+    if not orientations or any(o not in DESIGNS for o in orientations):
+        raise ValueError(f"不明な向き: {orientations}")
 
     def register(function):
         taken = by_number(number)
         if taken is not None and taken.name != name:
             raise ValueError(f"構図番号 {number} は {taken.name} が使用中です。")
         REGISTRY[name] = Layout(
-            name, label, category, tuple(fonts), function, native, number, orientation
+            name,
+            label,
+            category,
+            tuple(fonts),
+            function,
+            native,
+            number,
+            orientations,
+            hidden,
         )
         return function
 
@@ -73,11 +103,15 @@ def by_number(number):
     return next((item for item in REGISTRY.values() if item.number == number), None)
 
 
-def names(category=None, orientation=None):
+def names(category=None, orientation=None, *, hidden=False):
+    """Layouts drawn by lot (``hidden=True`` also lists the on-request ones)."""
+
     return [
         n
         for n, item in REGISTRY.items()
-        if category in (None, item.category) and orientation in (None, item.orientation)
+        if category in (None, item.category)
+        and (orientation is None or orientation in item.orientations)
+        and (hidden or not item.hidden)
     ]
 
 
@@ -120,6 +154,9 @@ class Scene:
         self.size = size
         self.w, self.h = size
         self.design = design
+        self.orientation = next(
+            (k for k, v in DESIGNS.items() if v == tuple(design)), "landscape"
+        )
         self.seed = seed
         self.kx, self.ky = self.w / design[0], self.h / design[1]
         self.k = min(self.kx, self.ky)
@@ -464,4 +501,4 @@ def fill(size, color):
 
 # Importing the modules registers their layouts.
 import miq_designs  # noqa: E402,F401
-import miq_portrait  # noqa: E402,F401
+import miq_neta  # noqa: E402,F401

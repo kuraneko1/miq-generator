@@ -18,22 +18,27 @@ from miq_images import encode_png
 
 ROOT = Path(__file__).resolve().parent
 AVATAR = ROOT / "demo-avatar.png"
-SAMPLE = "小さな発見が、明日の景色を変えていく。Stay curious ✨"
+SAMPLE = "こいつマジで何言ってんの？笑"
 DATE = datetime(2026, 4, 1, 9, 41)
 PAPER, INK, SUB = (238, 236, 231), (32, 32, 36), (110, 108, 104)
 # Thumbnail cell (image area) per orientation, and columns per row.
 CELLS = {
     "landscape": ((320, 180), 5),
-    "portrait": ((180, 320), 6),
-    "square": ((240, 240), 6),
+    "portrait": ((180, 320), 7),
+    "square": ((240, 240), 7),
 }
-HELP = "miq12 のように番号で構図を指定 ／ miqmiq…（繰り返し）は件数、数字は構図"
+HELP = (
+    "miq12 のように番号で構図を指定 ／ miq 縦・miq 正方形 で比率 ／ "
+    "miq 切り抜き はキャラを前に出す"
+)
 
 
 def _font(px, bold=False):
     item = next((face for face in FAMILIES.values() if face.installed()), None)
     if item is None:
-        raise ValueError("標準フォントがありません。python scripts/setup_fonts.py を実行してください。")
+        raise ValueError(
+            "標準フォントがありません。python scripts/setup_fonts.py を実行してください。"
+        )
     return font_at(item.path, px, item.name if bold else item.handle)
 
 
@@ -41,7 +46,7 @@ def thumbnails(orientation):
     """``(number, label, image)`` for every layout of one orientation."""
 
     specs = sorted(
-        (s for s in miq.REGISTRY.values() if s.orientation == orientation),
+        (s for s in miq.REGISTRY.values() if orientation in s.orientations),
         key=lambda s: s.number,
     )
     tiles = []
@@ -52,10 +57,12 @@ def thumbnails(orientation):
             "高橋 直人",
             "naoto_notes",
             layout=spec.name,
+            orientation=orientation,
             date=DATE,
             seed=1,
         )
-        tiles.append((f"#{spec.number}", spec.label, canvas))
+        label = spec.label + ("（miq 切り抜き）" if spec.hidden else "")
+        tiles.append((f"#{spec.number}", label, canvas))
     return tiles
 
 
@@ -103,7 +110,7 @@ def pages():
         (
             "miq-layouts-1.png",
             sheet(
-                [("横（16:9）", "landscape", thumbnails("landscape"))],
+                [("横（16:9） miq / miq12", "landscape", thumbnails("landscape"))],
                 "miq 構図台帳 1/2",
             ),
         )
@@ -116,7 +123,11 @@ def pages():
         from miq_dialogue import thumbnails as dialogue_thumbnails
 
         sections.append(
-            ("掛け合い miq vs / love / talk", "landscape", dialogue_thumbnails())
+            (
+                "掛け合い miq vs / miq love / miq talk",
+                "landscape",
+                dialogue_thumbnails(),
+            )
         )
     except ImportError:
         pass

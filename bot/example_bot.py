@@ -11,11 +11,17 @@ Reply to a message with:
 - ``miq 縦`` / ``miq 正方形`` / ``miq cute`` … — ratio and style.
 - ``miq vs`` / ``miq love`` / ``miq talk`` — the target and the person it
   replies to, each with their run of consecutive messages.
-- ``miq help`` — usage.
+- ``miq 切り抜き`` — the character cut out in front of the quote.
+- ``miq help`` — usage (and the running version).
+
+Sent without replying, a command quotes the newest message before it.
 
 Pictures, stickers and GIF links in the messages are drawn (animated ones as
 their first frame). Downloads run concurrently and are cached; rendering runs
-in a warmed process pool so the event loop is never blocked.
+in a warmed process pool so the event loop is never blocked. A render worker
+that dies (out of memory, a crash in a native library) used to break the
+pool for good, so every later request failed silently; the pool is now
+rebuilt and the request retried, and any failure is answered in the channel.
 """
 
 from __future__ import annotations
@@ -27,10 +33,12 @@ import multiprocessing as mp
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -39,7 +47,8 @@ import aiohttp
 import discord
 from discord import app_commands
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 import miq  # noqa: E402
 from bot import gather, jobs  # noqa: E402
@@ -51,6 +60,7 @@ log = logging.getLogger("miq")
 IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 CATEGORIES = {
     "all": "すべて",
+    "neta": "ネタ",
     "cool": "カッコいい",
     "cute": "かわいい",
     "classic": "定番",
@@ -60,7 +70,10 @@ NEXT_ORIENTATION = {
     "portrait": "square",
     "square": "landscape",
 }
-COOLDOWN = float(os.getenv("MIQ_COOLDOWN", "5"))
+# Requests one person may have in flight; more get ⏳ (none are dropped silently).
+MAX_PENDING = int(os.getenv("MIQ_MAX_PENDING", "2"))
+FAILED = "ごめん、うまく作れませんでした。もう一度送ってみてください。"
+NOT_FOUND = "引用するメッセージが見つかりませんでした。引用したいメッセージに返信して送ってください。"
 MAX_DOWNLOAD = 12 * 1024 * 1024
 MAX_MEDIA = 4
 MAX_MEDIA_BYTES = 24 * 1024 * 1024
@@ -157,6 +170,22 @@ class Downloads:
             return bytes(data)
 
 
+def version():
+    """The commit being run, so ``miq help`` shows whether a deploy is current."""
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def avatar_asset(user: discord.abc.User):
     return user.display_avatar.replace(size=512, static_format="png")
 
@@ -173,9 +202,11 @@ async def media_of(message: discord.Message, downloads: Downloads, budget: Media
             pending.append((sticker.url, None, False))
     for embed in message.embeds:
         if embed.type in ("gifv", "image"):
-            url = (embed.thumbnail and embed.thumbnail.url) or (
-                embed.image and embed.image.url
-            )
+            # The proxy URL is on Discord's own media host; the original
+            # (Tenor, Giphy …) is not downloaded directly.
+            url = (
+                embed.thumbnail and (embed.thumbnail.proxy_url or embed.thumbnail.url)
+            ) or (embed.image and (embed.image.proxy_url or embed.image.url))
             if url:
                 pending.append((url, None, False))
     results = await asyncio.gather(
@@ -281,34 +312,56 @@ class QuoteBot(discord.Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.workers = max(1, (os.cpu_count() or 2) - 1)
+        self.pool = self._pool()
+        self.downloads = Downloads()
+        self.pending: dict[int, int] = {}
+        self.catalog: asyncio.Future | None = None
+        self.version = version()
+
+    def _pool(self):
         # Fresh interpreters (not fork) so workers never inherit the event loop.
         method = "forkserver" if "forkserver" in mp.get_all_start_methods() else "spawn"
-        self.pool = ProcessPoolExecutor(
+        return ProcessPoolExecutor(
             max_workers=self.workers,
             initializer=miq.warmup,
             mp_context=mp.get_context(method),
         )
-        self.downloads = Downloads()
-        self.recent: dict[int, float] = {}
-        self.catalog: asyncio.Future | None = None
+
+    async def job(self, function, *args):
+        """Run ``function`` in the render pool, rebuilding a broken pool once.
+
+        A worker killed by the OOM killer or a native crash marks the whole
+        ``ProcessPoolExecutor`` as broken, and it never recovers by itself.
+        """
+
+        loop = asyncio.get_running_loop()
+        for attempt in (1, 2):
+            pool = self.pool
+            try:
+                return await loop.run_in_executor(pool, function, *args)
+            except BrokenProcessPool:
+                if attempt == 2:
+                    raise
+                log.error("render pool broke; starting a new one")
+                if self.pool is pool:
+                    self.pool = self._pool()
+                    pool.shutdown(wait=False, cancel_futures=True)
 
     async def setup_hook(self):
         self.tree.add_command(
             app_commands.ContextMenu(name="Make it a Quote", callback=quote_menu)
         )
         await self.tree.sync()
-        loop = asyncio.get_running_loop()
         # Start and warm every worker now, not on the first users' requests.
         start = time.perf_counter()
-        await asyncio.gather(
-            *(loop.run_in_executor(self.pool, jobs.ready) for _ in range(self.workers))
-        )
+        await asyncio.gather(*(self.job(jobs.ready) for _ in range(self.workers)))
         log.info(
-            "render pool ready: %d workers in %.0fms",
+            "miq %s: %d render workers ready in %.0fms",
+            self.version,
             self.workers,
             (time.perf_counter() - start) * 1000,
         )
-        self.catalog = loop.run_in_executor(self.pool, jobs.catalog)
+        self.catalog = asyncio.ensure_future(self.job(jobs.catalog))
 
     async def close(self):
         if self.downloads.session:
@@ -318,20 +371,9 @@ class QuoteBot(discord.Client):
 
     async def render(self, request: jobs.Request):
         start = time.perf_counter()
-        png, caption = await asyncio.get_running_loop().run_in_executor(
-            self.pool, jobs.render, request
-        )
+        png, caption = await self.job(jobs.render, request)
         log.info("render %.0fms (%s)", (time.perf_counter() - start) * 1000, caption)
         return discord.File(io.BytesIO(png), "quote.png"), f"-# {caption}"
-
-    def cooling(self, user_id: int) -> bool:
-        now = time.monotonic()
-        if now - self.recent.get(user_id, -COOLDOWN) < COOLDOWN:
-            return True
-        self.recent[user_id] = now
-        if len(self.recent) > 4096:
-            self.recent = {k: v for k, v in self.recent.items() if now - v < COOLDOWN}
-        return False
 
     async def on_message(self, message: discord.Message):
         if message.author.bot:
@@ -339,28 +381,19 @@ class QuoteBot(discord.Client):
         command = parse(message.content)
         if command is None:
             return
+        try:
+            await self.answer(message, command)
+        except Exception:
+            # Never fail silently: the person sees that something went wrong.
+            log.exception("miq failed for %r", message.content)
+            await say(message, FAILED)
+
+    async def answer(self, message: discord.Message, command: Command):
         if command.kind == "help":
-            await message.reply(USAGE, mention_author=False)
+            await message.reply(f"{USAGE}\n-# miq {self.version}", mention_author=False)
             return
         if command.kind == "catalog":
-            async with message.channel.typing():
-                try:
-                    pages = await asyncio.shield(self.catalog)
-                except Exception:
-                    log.exception("catalog failed")
-                    self.catalog = asyncio.get_running_loop().run_in_executor(
-                        self.pool, jobs.catalog
-                    )
-                    await message.reply(
-                        "台帳を作れませんでした。少し待ってもう一度どうぞ。",
-                        mention_author=False,
-                    )
-                    return
-            files = [discord.File(io.BytesIO(png), name) for name, png in pages]
-            await message.reply(files=files, mention_author=False)
-            return
-        target = await replied_to(message)
-        if target is None:
+            await self.send_catalog(message)
             return
         if command.unknown:
             await message.reply(
@@ -369,9 +402,12 @@ class QuoteBot(discord.Client):
             )
             return
         if command.layout is not None and by_number(command.layout) is None:
-            last = max(spec.number for spec in miq.REGISTRY.values())
+            numbers = "・".join(
+                str(spec.number)
+                for spec in sorted(miq.REGISTRY.values(), key=lambda s: s.number)
+            )
             await message.reply(
-                f"構図 {command.layout} 番はありません（1〜{last}、`miq台帳` で一覧）。",
+                f"構図 {command.layout} 番はありません（{numbers}、`miq台帳` で一覧）。",
                 mention_author=False,
             )
             return
@@ -381,34 +417,83 @@ class QuoteBot(discord.Client):
                 mention_author=False,
             )
             return
-        if self.cooling(message.author.id):
-            await message.add_reaction("⏳")
+
+        def history(m):
+            return message.channel.history(limit=gather.SCAN_LIMIT, before=m)
+
+        target = await replied_to(message)
+        if target is None:
+            # Not a reply: quote the newest message before the command.
+            try:
+                target = await gather.latest(message, history)
+            except discord.HTTPException:
+                target = None
+        if target is None:
+            await message.reply(NOT_FOUND, mention_author=False)
             return
-        async with message.channel.typing():
-            start = time.perf_counter()
-
-            def history(m):
-                return message.channel.history(limit=gather.SCAN_LIMIT, before=m)
-
-            if command.mood:
-                groups = await gather.conversation(target, history, replied_to)
-                if groups is None:
+        user = message.author.id
+        if self.pending.get(user, 0) >= MAX_PENDING:
+            try:
+                await message.add_reaction("⏳")
+            except discord.HTTPException:
+                pass
+            return
+        self.pending[user] = self.pending.get(user, 0) + 1
+        try:
+            async with message.channel.typing():
+                start = time.perf_counter()
+                groups = await self.gather(target, command, history)
+                if len(groups) == 1:
                     command = replace(command, mood=None)
-            if not command.mood:
-                groups = [await gather.same_author(target, command.count, history)]
-            request = await build(groups, command, self.downloads)
-            fetched = time.perf_counter()
-            file, caption = await self.render(request)
-        sent = time.perf_counter()
-        await message.reply(
-            caption, file=file, view=Controls(self, request), mention_author=False
-        )
+                request = await build(groups, command, self.downloads)
+                fetched = time.perf_counter()
+                file, caption = await self.render(request)
+            sent = time.perf_counter()
+            await message.reply(
+                caption, file=file, view=Controls(self, request), mention_author=False
+            )
+        finally:
+            self.pending[user] -= 1
+            if not self.pending[user]:
+                del self.pending[user]
         log.info(
             "miq fetch=%.0fms render=%.0fms upload=%.0fms",
             (fetched - start) * 1000,
             (sent - fetched) * 1000,
             (time.perf_counter() - sent) * 1000,
         )
+
+    async def gather(self, target, command: Command, history):
+        """The message groups to draw; degrades to the target alone when the
+        bot may not read the channel history (no 「メッセージ履歴を読む」)."""
+
+        try:
+            if command.mood:
+                groups = await gather.conversation(target, history, replied_to)
+                if groups is not None:
+                    return list(groups)
+            return [await gather.same_author(target, command.count, history)]
+        except discord.Forbidden:
+            log.warning("no permission to read history in #%s", target.channel)
+            return [[target]]
+
+    async def send_catalog(self, message: discord.Message):
+        async with message.channel.typing():
+            try:
+                pages = await asyncio.shield(self.catalog)
+            except Exception:
+                log.exception("catalog failed")
+                self.catalog = asyncio.ensure_future(self.job(jobs.catalog))
+                pages = await asyncio.shield(self.catalog)
+        files = [discord.File(io.BytesIO(png), name) for name, png in pages]
+        await message.reply(files=files, mention_author=False)
+
+
+async def say(message: discord.Message, text: str):
+    try:
+        await message.reply(text, mention_author=False)
+    except discord.HTTPException:
+        log.warning("could not reply in #%s", message.channel)
 
 
 class Controls(discord.ui.View):
@@ -422,9 +507,14 @@ class Controls(discord.ui.View):
             self.remove_item(self.category)
 
     async def redraw(self, interaction: discord.Interaction, request: jobs.Request):
-        self.request = request
         await interaction.response.defer()
-        file, caption = await self.bot.render(request)
+        try:
+            file, caption = await self.bot.render(request)
+        except Exception:
+            log.exception("redraw failed")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        self.request = request
         await interaction.edit_original_response(
             content=caption, attachments=[file], view=self
         )
@@ -444,12 +534,15 @@ class Controls(discord.ui.View):
         following = NEXT_ORIENTATION[current]
         if self.request.mood and following == "square":
             following = "landscape"
+        # A layout that draws the next orientation too (e.g. 切り抜き) stays.
+        spec = by_number(self.request.layout) if self.request.layout else None
+        keep = spec is not None and following in spec.orientations
         await self.redraw(
             interaction,
             replace(
                 self.request,
                 orientation=following,
-                layout=None,
+                layout=self.request.layout if keep else None,
                 seed=random.getrandbits(32),
             ),
         )
@@ -479,8 +572,13 @@ class Controls(discord.ui.View):
 async def quote_menu(interaction: discord.Interaction, message: discord.Message):
     await interaction.response.defer(thinking=True)
     bot: QuoteBot = interaction.client
-    request = await build([[message]], Command("quote"), bot.downloads)
-    file, caption = await bot.render(request)
+    try:
+        request = await build([[message]], Command("quote"), bot.downloads)
+        file, caption = await bot.render(request)
+    except Exception:
+        log.exception("quote menu failed")
+        await interaction.followup.send(FAILED)
+        return
     await interaction.followup.send(caption, file=file, view=Controls(bot, request))
 
 

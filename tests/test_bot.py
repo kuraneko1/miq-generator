@@ -63,6 +63,10 @@ T0 = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
         ("miqmiq 縦 cute", Command("quote", 2, orientation="portrait", category="cute")),
         ("miq vs　縦", Command("quote", mood="vs", orientation="portrait")),
         ("miq28", Command("quote", 1, 28)),
+        ("miq 切り抜き", Command("quote", 1, 40)),
+        ("miq cutout 縦", Command("quote", 1, 40, orientation="portrait")),
+        ("miq ネタ", Command("quote", category="neta")),
+        ("miq line", Command("quote", mood="talk")),
         ("miq 何それ", Command("quote", unknown=("何それ",))),
         ("miq台帳", Command("catalog")),
         ("miq 一覧", Command("catalog")),
@@ -84,7 +88,7 @@ def test_parse_ignores_other_messages(text):
 
 def msg(author, minute, content="text", *, reply=None, kind="default", **extra):
     return SimpleNamespace(
-        author=SimpleNamespace(id=author),
+        author=SimpleNamespace(id=author, bot=extra.get("bot", False)),
         created_at=T0 + timedelta(minutes=minute),
         content=content,
         type=SimpleNamespace(name=kind),
@@ -216,8 +220,10 @@ def test_render_job_quote_with_media_and_layout_number():
         [(png_bytes((400, 300), "red"), False), (gif_bytes(), True), (b"broken", False)],
         T0,
     )
-    png, caption = jobs.render(jobs.Request([part], layout=28, seed=1))
-    assert caption.startswith("#28 ")
+    png, caption = jobs.render(
+        jobs.Request([part], layout=39, orientation="portrait", seed=1)
+    )
+    assert caption.startswith("#39 ")
     with Image.open(io.BytesIO(png)) as image:
         assert image.size == miq.default_size("portrait")
 
@@ -352,3 +358,52 @@ def test_catalog_renders_when_layouts_first_font_is_unavailable(monkeypatch):
     assert miq_catalog._font(20)
     tiles = miq_catalog.thumbnails("landscape")
     assert len(tiles) == 1 and tiles[0][2].size == miq.default_size()
+
+
+def test_bots_are_never_quoted_or_paired():
+    # The bot's own quote images used to become the "other person" of miq vs.
+    b = msg(2, 0, "b")
+    a = msg(1, 1, "a", reply=b)
+    image = msg(99, 2, "-# #5 ノワール", bot=True)
+    a2 = msg(1, 3, "a2")
+    history, replied_to = channel(b, a, image, a2)
+    assert not gather.usable(image)
+    theirs, mine = run(gather.conversation(a2, history, replied_to))
+    assert contents(theirs) == ["b"] and contents(mine) == ["a", "a2"]
+
+
+def test_a_command_without_a_reply_quotes_the_latest_message():
+    b = msg(2, 0, "b")
+    old = msg(3, -200, "old")
+    image = msg(99, 1, "-# #1", bot=True)
+    other_command = msg(3, 2, "miq")
+    command = msg(1, 3, "miq vs")
+    history, _ = channel(old, b, image, other_command, command)
+    assert run(gather.latest(command, history)).content == "b"
+    history, _ = channel(old, command)
+    assert run(gather.latest(command, history)) is None
+
+
+def test_a_broken_render_pool_is_rebuilt():
+    """A worker killed by the OOM killer used to break every later request."""
+
+    import os
+    import signal
+
+    from bot.example_bot import QuoteBot
+
+    bot = QuoteBot.__new__(QuoteBot)
+    bot.workers = 1
+    bot.pool = bot._pool()
+
+    async def scenario():
+        assert await bot.job(jobs.ready)
+        for pid in list(bot.pool._processes):
+            os.kill(pid, signal.SIGKILL)
+        await asyncio.sleep(0.3)
+        return await bot.job(jobs.ready)
+
+    try:
+        assert run(scenario())
+    finally:
+        bot.pool.shutdown(cancel_futures=True)

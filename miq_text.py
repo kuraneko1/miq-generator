@@ -243,7 +243,7 @@ def _balanced(words, width, measure):
             measured = measure(i, j)
             if measured > width:
                 break
-            if measured <= 0:
+            if measured <= 0 and not (i == 0 and j == n):
                 continue
             last = words[j - 1].rstrip()[-1:] or " "
             penalty = 0.28 + (1 - measured / width) ** 2
@@ -438,6 +438,9 @@ def fit(text, make_font, width, height, maximum, *, classic=False):
     high = maximum
     low = high / 2
     while (best := attempt(low)) is None:
+        if low < 1e-6:
+            # Nothing visible to place (a blank or zero-width-only quote).
+            raise ValueError("本文に表示できる文字がありません。")
         high = low
         low /= 2
     for _ in range(13):

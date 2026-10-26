@@ -107,8 +107,18 @@ FAMILIES = {
         FontFamily("code", "M PLUS 1 Code", "MPLUS1Code.ttf", 700, 600, 400),
         FontFamily("klee", "Klee One", "KleeOne.ttf"),
         FontFamily("rocknroll", "RocknRoll One", "RocknRollOne.ttf"),
+        # Display faces for the joke layouts: pop (創英角ポップ体風), brush pop,
+        # brush (筆), marker and girly handwriting.
+        FontFamily("pop", "Mochiy Pop One", "MochiyPopOne.ttf", scale=0.94),
+        FontFamily("potta", "Potta One", "PottaOne.ttf", scale=0.96),
+        FontFamily("syuku", "Yuji Syuku", "YujiSyuku.ttf"),
+        FontFamily("magic", "Yusei Magic", "YuseiMagic.ttf"),
+        FontFamily("hachimaru", "Hachi Maru Pop", "HachiMaruPop.ttf"),
     )
 }
+
+# The newspaper masthead (Latin only); a logo, not a text face.
+BLACKLETTER = FONT_DIR / "UnifrakturMaguntia.ttf"
 
 
 def family(key):

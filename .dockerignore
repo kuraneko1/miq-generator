@@ -10,3 +10,4 @@ fonts/*.ttf
 fonts/*.OFL.txt
 fonts/*.LICENSE.md
 fonts/.cache/
+models/*.onnx

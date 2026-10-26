@@ -6,3 +6,5 @@ fonttools>=4.55,<5
 pangocffi>=0.14.1,<0.15
 pangocairocffi>=0.7,<0.8
 cairocffi>=1.7,<2
+# miq 切り抜き: background removal (optional; flat backgrounds work without it)
+onnxruntime>=1.17,<2

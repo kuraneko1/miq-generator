@@ -40,11 +40,28 @@ def has_content(message) -> bool:
 
 
 def usable(message) -> bool:
-    """A message worth quoting: not a system line, not a miq command, not empty."""
+    """A message worth quoting: a person's, not a system line, not a miq command,
+    not empty. Bots (this one's own quote images included) never count, or
+    ``miq vs`` would pair someone with the bot."""
 
     return (
-        is_regular(message) and has_content(message) and not is_command(message.content)
+        not getattr(message.author, "bot", False)
+        and is_regular(message)
+        and has_content(message)
+        and not is_command(message.content)
     )
+
+
+async def latest(command, history):
+    """The newest usable message before ``command``: the target of a ``miq``
+    sent without replying. ``None`` if nothing recent qualifies."""
+
+    async for message in history(command):
+        if command.created_at - message.created_at > WINDOW:
+            break
+        if usable(message):
+            return message
+    return None
 
 
 async def same_author(target, count, history):
@@ -81,8 +98,8 @@ async def run(anchor, history):
             if usable(message):
                 previous = message
                 break
-            if is_command(message.content):
-                continue
+            if is_command(message.content) or getattr(message.author, "bot", False):
+                continue  # miq commands and bot replies sit between the turns
             break
         if picked[-1].created_at - message.created_at > RUN_GAP:
             break

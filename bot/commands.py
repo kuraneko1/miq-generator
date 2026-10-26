@@ -23,12 +23,26 @@ OPTIONS = {
     "mood": {
         "vs": ("vs", "対戦", "バトル", "battle", "ビリビリ"),
         "love": ("love", "恋", "ラブ", "らぶ", "♡", "♥", "❤", "❤️", "💕", "ハート"),
-        "talk": ("talk", "会話", "chat", "トーク"),
+        "talk": ("talk", "会話", "chat", "トーク", "line", "ライン"),
+    },
+    # On-request layouts, by number (40 = 切り抜き: the character steps out).
+    "layout": {
+        40: (
+            "cutout",
+            "切り抜き",
+            "切りぬき",
+            "きりぬき",
+            "切り抜く",
+            "透過",
+            "飛び出し",
+            "とびだし",
+        ),
     },
     "category": {
         "cool": ("cool", "かっこいい", "カッコいい", "カッコイイ"),
         "cute": ("cute", "かわいい", "可愛い", "カワイイ"),
         "classic": ("classic", "定番"),
+        "neta": ("neta", "ネタ", "ねた", "おもしろ", "面白", "ボケ"),
     },
 }
 LOOKUP = {
@@ -40,9 +54,11 @@ LOOKUP = {
 USAGE = """**miq の使い方**（引用したいメッセージに返信して送信）
 `miq` 1件 ／ `miqmiq` `miqmiqmiq`… その人の直前の発言もまとめて1つに（最大10件・間の他人の発言は飛ばす）
 `miq12` 構図を番号で指定（番号は `miq台帳` で一覧）
-`miq 縦` `miq 正方形` `miq 横` 比率 ／ `miq cool` `miq cute` `miq classic` 系統
-`miq vs` `miq love` `miq talk` 返信相手との掛け合い（各自の連続した発言をまとめて描画）
-組み合わせ例: `miqmiq 縦 cute`、`miq vs 縦`、`miq28`"""
+`miq 縦` `miq 正方形` `miq 横` 比率 ／ `miq ネタ` `miq cool` `miq cute` `miq classic` 系統
+`miq vs` `miq love` `miq talk`(LINE) 返信相手との掛け合い（各自の連続した発言をまとめて描画）
+`miq 切り抜き` アイコンの背景を消してキャラを前に出し、後ろに本文を大きく
+返信しないで送ると直前のメッセージを引用します
+組み合わせ例: `miqmiq 縦 ネタ`、`miq vs 縦`、`miq 切り抜き 縦`、`miq38`"""
 
 
 @dataclass(frozen=True)
@@ -82,7 +98,10 @@ def parse(content: str) -> Command | None:
             layout = int(word)
         elif word in LOOKUP:
             field, value = LOOKUP[word]
-            found[field] = value
+            if field == "layout":
+                layout = value
+            else:
+                found[field] = value
         else:
             unknown.append(word)
     count = min(MAX_COUNT, len(matched["rep"]) // 3)

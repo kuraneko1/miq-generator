@@ -1,4 +1,4 @@
-"""Two-person exchanges: ``versus`` (ビリビリ), ``love`` (ハート) and ``talk``.
+"""Two-person exchanges: ``versus`` (ビリビリ), ``love`` (ハート) and ``talk`` (LINE).
 
 ``left`` is the earlier speaker (the message that was replied to) and
 ``right`` the reply. Landscape puts them side by side, portrait stacks them.
@@ -30,7 +30,7 @@ from miq_text import EmojiImages, paint
 MOODS = {
     "vs": ("対戦", ("dela", "rocknroll", "gothic")),
     "love": ("ラブ", ("maru", "rocknroll", "klee")),
-    "talk": ("会話", ("maru", "gothic", "rocknroll")),
+    "talk": ("LINE", ("gothic", "maru", "rocknroll")),
 }
 
 
@@ -589,80 +589,114 @@ def love(a, b, portrait):
 
 
 # ---------------------------------------------------------------------------
-# talk: a messenger screen, earlier message on the left, the reply on the right
+# talk: a plain LINE screen — flat colours, no shadows, big type
 # ---------------------------------------------------------------------------
+
+LINE_BACKGROUND = (140, 171, 216)
+LINE_HEADER = (38, 48, 66)
+LINE_GREEN = (138, 232, 120)
 
 
 def talk(a, b, portrait):
-    canvas = fx.gradient(a.size, [(214, 228, 246), (236, 232, 250)], 90)
-    ink, sub = (40, 44, 60), (96, 102, 126)
-    green = (140, 226, 120)
+    canvas = Image.new("RGBA", a.size, LINE_BACKGROUND + (255,))
+    ink, meta = (18, 18, 20), (236, 241, 250)
+    W = 1080 if portrait else 1920
+    header = 150 if portrait else 120
+    a.rect(canvas, (0, 0, W, header), LINE_HEADER)
+    a.line(canvas, "<", (40, header * 0.68), 48, (255, 255, 255), kind="handle")
+    title = a.name or a.handle_text
+    if title:
+        a.line(canvas, title, (110, header * 0.68), 44, (255, 255, 255), width=W - 260)
+    a.line(
+        canvas,
+        "≡",
+        (W - 40, header * 0.68),
+        48,
+        (255, 255, 255),
+        kind="handle",
+        anchor="right",
+    )
     if portrait:
-        avatars = ((60, 110, 190, 240), (890, 980, 1020, 1110))
-        regions = ((210, 180, 1000, 900), (80, 1040, 870, 1820))
-        names = ((220, 160, "left"), (860, 1020, "right"))
+        avatar = (36, 210, 186, 360)
+        regions = ((210, 262, 1040, 1010), (110, 1070, 1044, 1880))
+        label = (214, 244)
     else:
-        avatars = ((70, 70, 200, 200), (1720, 560, 1850, 690))
-        regions = ((230, 130, 1450, 520), (470, 620, 1690, 1010))
-        names = ((240, 110, "left"), (1690, 600, "right"))
+        avatar = (46, 165, 206, 325)
+        regions = ((236, 214, 1560, 610), (380, 660, 1876, 1050))
+        label = (240, 196)
     pads = [a.box(r) for r in regions]
-    inner = [
-        (l + a.S(44), t + a.S(44), r - a.S(44), bb - a.S(44)) for l, t, r, bb in pads
-    ]
-    ra, rb = _fit_pair(a, b, inner, 78)
-    for s, box, (x, y, anchor), region, result, side, color in zip(
-        (a, b),
-        avatars,
-        names,
-        pads,
-        (ra, rb),
-        ("left", "right"),
-        ((255, 255, 255), green),
+    p = a.S(40)
+    inner = [(l + p, t + p, r - p, bb - p) for l, t, r, bb in pads]
+    ra, rb = _fit_pair(a, b, inner, 110)
+    a.place(canvas, a.image, avatar, circle=True, cover=True)
+    if a.name:
+        a.line(canvas, a.name, label, 30, meta, width=900)
+    tail = a.S(30)
+    below = None
+    for s, region, result, side, color in zip(
+        (a, b), pads, (ra, rb), ("left", "right"), ((255, 255, 255), LINE_GREEN)
     ):
-        s.place(canvas, s.image, box, circle=True, cover=True)
-        label = s.name or s.handle_text
-        if label:
-            s.line(canvas, label, (x, y), 32, sub, anchor=anchor, width=900)
+        if below is not None:
+            # The reply follows right under the first message, as in LINE.
+            region = (region[0], min(region[1], below), region[2], region[3])
         l, t, r, bb = bubble(
             s,
             canvas,
-            (region[0], region[1] + s.S(10), region[2], region[3]),
+            region,
             result,
             color,
             ink,
             side=side,
             valign="top",
+            pad=40,
+            radius=44,
+            shadow=None,
         )
-        meta = s.date.strftime("%H:%M")
-        if side == "right":
+        clock = s.date.strftime("%H:%M")
+        if side == "left":
+            _triangle(
+                canvas,
+                (l - tail * 0.7, t + tail * 0.2),
+                (l + tail, t + tail * 1.4),
+                tail * 1.2,
+                color,
+            )
+            s.line(
+                canvas,
+                clock,
+                (r / s.kx + 16, bb / s.ky - 8),
+                24,
+                meta,
+                kind="handle",
+                width=200,
+            )
+            below = round(bb + s.S(56))
+        else:
+            _triangle(
+                canvas,
+                (r + tail * 0.7, t + tail * 0.2),
+                (r - tail, t + tail * 1.4),
+                tail * 1.2,
+                color,
+            )
             s.line(
                 canvas,
                 "既読",
-                (l / s.kx - 20, bb / s.ky - 46),
+                (l / s.kx - 16, bb / s.ky - 40),
                 24,
-                sub,
+                meta,
                 kind="handle",
                 anchor="right",
                 width=200,
             )
             s.line(
                 canvas,
-                meta,
-                (l / s.kx - 20, bb / s.ky - 12),
+                clock,
+                (l / s.kx - 16, bb / s.ky - 8),
                 24,
-                sub,
+                meta,
                 kind="handle",
                 anchor="right",
-                width=200,
-            )
-        else:
-            s.line(
-                canvas,
-                meta,
-                (r / s.kx + 20, bb / s.ky - 12),
-                24,
-                sub,
-                kind="handle",
                 width=200,
             )
     return canvas

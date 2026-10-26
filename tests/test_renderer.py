@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 import miq
 import miq_layouts
@@ -139,8 +139,10 @@ def test_uniform_selection_boundaries_and_seed():
         def random(self):
             return self.value
 
-    layouts = list(miq.LAYOUTS)
-    assert len(layouts) >= 27 and len(set(layouts)) == len(layouts)
+    # On-request layouts (切り抜き) are never drawn by lot.
+    layouts = miq_layouts.names()
+    assert "cutout" in miq.LAYOUTS and "cutout" not in layouts
+    assert len(layouts) >= 12 and len(set(layouts)) == len(layouts)
     for index, name in enumerate(layouts):
         assert miq.choose_layout(Fixed((index + 0.5) / len(layouts))) == name
     assert miq.choose_layout(Fixed(0)) == layouts[0]
@@ -160,7 +162,8 @@ def test_style_draw_is_reproducible_and_respects_layout_fonts():
         layout, face = miq.choose_style(seed=seed)
         assert (layout, face) == miq.choose_style(seed=seed)
         assert face in miq.REGISTRY[layout].fonts
-    assert miq.choose_style("pixel", seed=1) == ("pixel", "dot")
+    assert miq.choose_style("notebook", "magic") == ("notebook", "magic")
+    assert miq.choose_style(38, seed=1)[0] == "zatsu"
     assert miq.choose_style("classic", "mincho") == ("classic", "mincho")
     with pytest.raises(ValueError):
         miq.choose_style("classic", "comic-sans")
@@ -417,13 +420,13 @@ def test_render_accepts_bytes_images_and_streams(tmp_path):
 
     data = AVATAR.read_bytes()
     buffer = io.BytesIO()
-    miq.render(data, "本文", buffer, layout="swiss", font_family="gothic")
+    miq.render(data, "本文", buffer, layout="noir", font_family="gothic")
     first = buffer.getvalue()
     with Image.open(AVATAR) as image:
         png, layout, face = miq.render_bytes(
-            image, "本文", layout="swiss", font_family="gothic"
+            image, "本文", layout="noir", font_family="gothic"
         )
-    assert (layout, face) == ("swiss", "gothic")
+    assert (layout, face) == ("noir", "gothic")
     assert first[:8] == b"\x89PNG\r\n\x1a\n" and first == png
 
 
@@ -449,12 +452,12 @@ def test_discord_markup_is_cleaned():
 
 def test_markup_can_be_disabled(tmp_path):
     raw, _, _ = miq.compose(
-        AVATAR, "**x**", layout="swiss", font_family="gothic", markup=False
+        AVATAR, "**x**", layout="noir", font_family="gothic", markup=False
     )
-    cleaned, _, _ = miq.compose(AVATAR, "**x**", layout="swiss", font_family="gothic")
+    cleaned, _, _ = miq.compose(AVATAR, "**x**", layout="noir", font_family="gothic")
     assert ImageChops.difference(raw.convert("RGB"), cleaned.convert("RGB")).getbbox()
     with pytest.raises(ValueError):
-        miq.compose(AVATAR, "||  ||", layout="swiss")
+        miq.compose(AVATAR, "||  ||", layout="noir")
 
 
 def test_vertical_text_rules():
@@ -508,15 +511,28 @@ def test_greedy_wrap_respects_inseparable_leaders():
     assert units("100%の力") == ["100%の", "力"]
 
 
-def test_ticket_renders_at_the_minimum_size():
+@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
+def test_every_layout_renders_at_the_minimum_size(layout):
     png, chosen, face = miq.render_bytes(
-        AVATAR, "短い引用", "名前", "user", size=(200, 120), layout="ticket",
-        font_family="code",
+        AVATAR, "短い引用", "名前", "user", size=(200, 120), layout=layout,
     )
-    assert chosen == "ticket"
+    assert chosen == layout
     with Image.open(__import__("io").BytesIO(png)) as image:
         assert image.size == (200, 120)
         assert image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+
+
+@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
+@pytest.mark.parametrize("text", ["  \n\nabc\n\n", "\u200b\n本文", "a\n \u3000\nb"])
+def test_blank_and_zero_width_lines_do_not_crash(layout, text):
+    # A whitespace-only or zero-width-only line used to make the type-size
+    # search halve forever and divide by zero in every layout but classic.
+    miq.compose(AVATAR, text, "n", "h", layout=layout, seed=1, fast=True)
+
+
+def test_zero_width_only_text_renders():
+    canvas, _, _ = miq.compose(AVATAR, "\u200b", "n", "h", layout="noir", fast=True)
+    assert canvas.size == (640, 360)
 
 
 def test_private_use_placeholder_characters_are_restored():
@@ -539,7 +555,7 @@ def test_ascii_art_is_detected_and_rendered():
     assert detect(text)[0] == "sjis"
     tux = (ROOT / "tests" / "aa" / "tux.txt").read_text()
     assert detect(tux)[0] == "mono"
-    for layout in ("classic", "noir", "terminal", "tategaki"):
+    for layout in ("classic", "noir", "telop", "brush"):
         png, chosen, face = miq.render_bytes(
             AVATAR, text, "名前", "handle", size=(640, 360), layout=layout,
             font_family=miq.REGISTRY[layout].fonts[0], markup=False,
@@ -564,12 +580,9 @@ def test_cli_lists_layouts():
 
 # Users type these numbers (miq12); they must never move.
 NUMBERS = {
-    1: "classic", 2: "mirrored", 3: "magazine", 4: "literary", 5: "noir",
-    6: "cinema", 7: "neon", 8: "glitch", 9: "terminal", 10: "swiss",
-    11: "brutal", 12: "duotone", 13: "aurora", 14: "blueprint", 15: "manga",
-    16: "tategaki", 17: "luxe", 18: "newspaper", 19: "ticket", 20: "nowplaying",
-    21: "diagonal", 22: "gallery", 23: "kawaii", 24: "chat", 25: "notebook",
-    26: "pixel", 27: "tcg",
+    1: "classic", 2: "mirrored", 5: "noir", 12: "duotone", 15: "manga",
+    25: "notebook", 34: "news", 35: "fade", 36: "brush", 37: "telop",
+    38: "zatsu", 39: "wanted", 40: "cutout",
 }
 
 
@@ -589,12 +602,16 @@ def test_orientation_draws_and_default_sizes():
             png, layout, _ = miq.render_bytes(
                 AVATAR, "縦の引用", "名前", orientation=orientation, seed=seed
             )
-            assert miq.REGISTRY[layout].orientation == orientation
+            assert orientation in miq.REGISTRY[layout].orientations
             with Image.open(io.BytesIO(png)) as image:
                 assert image.size == size
-    # A size alone picks the orientation; a numbered layout keeps its own.
+    # A size alone picks the orientation; a numbered layout keeps its own
+    # unless it can draw the requested one.
     _, layout, _ = miq.render_bytes(AVATAR, "x", size=(540, 960), seed=1)
-    assert miq.REGISTRY[layout].orientation == "portrait"
+    assert "portrait" in miq.REGISTRY[layout].orientations
+    png, layout, _ = miq.render_bytes(AVATAR, "x", layout=37, orientation="portrait")
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == (540, 960)
     png, layout, _ = miq.render_bytes(AVATAR, "x", layout=1, orientation="portrait")
     assert layout == "classic"
     with Image.open(io.BytesIO(png)) as image:
@@ -639,3 +656,30 @@ def test_catalog_pages_number_every_layout():
     for _, png in result:
         with Image.open(io.BytesIO(png)) as image:
             assert image.width >= 900 and image.height > 300
+
+
+def test_cutout_removes_a_flat_background_without_the_network(monkeypatch):
+    import miq_cutout
+
+    monkeypatch.setattr(miq_cutout, "model_path", lambda name=None: None)
+    miq_cutout._CACHE.clear()
+    image = Image.new("RGBA", (200, 200), (250, 220, 40, 255))
+    ImageDraw.Draw(image).ellipse((50, 40, 150, 190), fill=(30, 40, 120, 255))
+    subject, removed = miq_cutout.cutout(image)
+    assert removed
+    assert subject.getpixel((2, 2))[3] == 0  # the corner is background
+    assert subject.getpixel((subject.width // 2, subject.height // 2))[3] == 255
+    # A picture with nothing to separate is kept whole.
+    plain = Image.new("RGBA", (120, 120), (90, 160, 90, 255))
+    kept, removed = miq_cutout.cutout(plain)
+    assert not removed and kept.size == plain.size
+
+
+@pytest.mark.parametrize("orientation", ["landscape", "portrait", "square"])
+def test_cutout_layout_renders_every_orientation(orientation):
+    png, layout, _ = miq.render_bytes(
+        AVATAR, "後ろに大きく", "名前", "h", layout=40, orientation=orientation
+    )
+    assert layout == "cutout"
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == miq.default_size(orientation)

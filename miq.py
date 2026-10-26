@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline quote PNG renderer: 27 layouts, one typeface per image, CLI and API."""
+"""Offline quote PNG renderer: numbered layouts, one typeface per image, CLI and API."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from miq_fonts import (
     font_at,
 )
 from miq_images import encode_png
-from miq_layouts import REGISTRY, Scene
+from miq_layouts import DESIGNS, REGISTRY, Scene
 from miq_text import EmojiImages, MixedFont, fit, wrap_words
 from miq_words import units
 
@@ -45,7 +45,7 @@ ALIGN_CHOICES = ("center", "right")
 LINE_HEIGHT = 1.43
 LAYOUTS = tuple(REGISTRY)
 # Every layout is equally likely (kept as pairs for the old public name).
-LAYOUT_WEIGHTS = tuple((name, 1) for name in LAYOUTS)
+LAYOUT_WEIGHTS = tuple((name, 1) for name in miq_layouts.names())
 PNG_COMPRESSION = 3
 __all__ = [
     "BASE_SIZE",
@@ -306,14 +306,21 @@ def compose(
                 f"書体 {chosen.label} がありません。python scripts/setup_fonts.py を実行してください。"
             )
     spec = REGISTRY[layout]
-    target = resolve_size(size) if explicit else default_size(spec.orientation)
+    # Layouts that draw several orientations follow the request; the others
+    # keep their own (and its default size when no size is given).
+    if explicit:
+        target = resolve_size(size)
+        drawn = spec.orientation_for(miq_layouts.orientation_of(target))
+    else:
+        drawn = spec.orientation_for(orientation)
+        target = default_size(drawn)
     image = _open_image(avatar)
     images = EmojiImages(_emoji_font(emoji_font_file), custom_emojis)
     latin = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
     latin = find_italic_font(latin) if latin else None
     # Native layouts paint at the output size; the others draw at up to 2×
     # (capped at 1920 wide) and downsample, which keeps small outputs crisp.
-    design = spec.design[0]
+    design = DESIGNS[drawn][0]
     factor = 1 if spec.native or fast else min(2.0, max(1.0, design / target[0]))
     if factor > 1.5 and target[0] * 2 <= max(design, 1280):
         factor = 2
@@ -330,7 +337,7 @@ def compose(
         date,
         name_file=find_font(bold_font_file) if bold_font_file else None,
         latin_file=latin,
-        design=spec.design,
+        design=DESIGNS[drawn],
         seed=seed,
     )
     scene.align = align
@@ -428,6 +435,12 @@ def warmup(full=True):
         EmojiImages(path).get("😀")
     if not full:
         return
+    if os.getenv("MIQ_CUTOUT_PRELOAD") == "1":
+        # Load the 切り抜き network now (≈2 s, ~300 MB per process) instead of
+        # on the first ``miq 切り抜き`` each worker handles.
+        import miq_cutout
+
+        miq_cutout.preload()
     import miq_complex  # noqa: F401
     import miq_vertical  # noqa: F401
 
@@ -435,7 +448,9 @@ def warmup(full=True):
         if item.installed():
             coverage(str(item.path))
     sample = Image.new("RGBA", (64, 64), (90, 120, 160, 255))
-    for name in REGISTRY:
+    for name, spec in REGISTRY.items():
+        if spec.hidden:
+            continue  # on-request layouts (the cutout network) load lazily
         try:
             compose(sample, "あA😀", "n", "h", layout=name, seed=0, fast=True)
         except (OSError, ValueError):
@@ -492,9 +507,10 @@ def main():
     if args.list_layouts:
         for name, spec in sorted(REGISTRY.items(), key=lambda kv: kv[1].number):
             fonts = ", ".join(spec.fonts)
+            sides = "/".join(o[0] for o in spec.orientations)
             print(
-                f"{spec.number:3d} {name:13} {spec.orientation:9} {spec.category:7}"
-                f" {spec.label}  [{fonts}]"
+                f"{spec.number:3d} {name:10} {sides:6} {spec.category:7}"
+                f" {spec.label}{'（指定時のみ）' if spec.hidden else ''}  [{fonts}]"
             )
         return
     if args.avatar is None or (args.text is None and args.text_file is None):
